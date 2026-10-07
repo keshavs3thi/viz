@@ -14,18 +14,26 @@ There's nothing to build. Serve the directory with any static server and open it
 python -m http.server 8000   # then open http://localhost:8000
 ```
 
-Opening `index.html` directly via `file://` mostly works, but the async `loadFont` call fetches over the network, so a local server is more reliable.
+Opening `index.html` directly via `file://` mostly works, but the help panel's "Copy values" button needs a secure context for clipboard access (on `file://` it logs the values to the console instead).
 
 ## Architecture
 
-- `index.html` loads p5.js **1.11.11** from jsDelivr (p5.sound was removed on purpose) and then `sketch.js`. Page styles are inline.
-- `sketch.js` uses p5 **global mode**. All state is module-level `let` variables (shape, grid size, HSB colors, toggles), and the p5 global hooks (`setup`, `draw`, `keyPressed`, `keyReleased`, `mouseMoved`) delegate to the `Controls` class, which changes that global state.
-- **Rendering pipeline** (`draw`): set the background, then either draw `HelpOverlay` and return early (the grid is not drawn while help is showing), or run `updateCamera` → `setupLights` → `drawGrid`.
-- **Grid layout:** `cols` × `rows` cells are spread over the full canvas width and height. The arrow keys clamp the grid to `MAX_COLS` × `MAX_ROWS`, because each cell is its own draw call. `camZ` is recomputed by `updateCamZ()` (in `setup` and `windowResized`) from the canvas height and the fixed `FOV`, so the grid fits the viewport at any window size. `updateCamera()` still re-applies the perspective every frame, because `HelpOverlay` switches to `ortho()`.
-- **Per-cell transforms** are applied in this order: cursor push offset (`cursorPushOffset`: exponential core plus a soft quadratic tail with noise jitter), then `applyWiggle`, then optional rotation, then `drawShape3D`. Values that are the same for every cell (`millis()`, the mouse offset, `fill`) are computed once per frame in `drawGrid` and passed in. `cursorPushOffset` returns one shared, reused `pushOut` object. Because the WEBGL origin is the canvas center, mouse coordinates are offset by half the width and height.
+- `index.html` loads p5.js **1.11.11** from jsDelivr (p5.sound was removed on purpose), then `panel.js`, then `sketch.js`. Page styles, including the help panel's markup and CSS, are inline in `index.html`.
+- `sketch.js` uses p5 **global mode**. All state is module-level `let` variables (shape, grid size, HSB colors, toggles), and the p5 input hooks (`keyPressed`, `keyReleased`, `mouseMoved`, and `mouseDragged`, which forwards to `mouseMoved`) delegate to the `Controls` class, which changes that global state.
+- `setup` caps `pixelDensity` at 2 so 3× phone screens don't shade 9× the pixels.
+- **Rendering pipeline** (`draw`): set the background, then `updateCamera` → `setupLights` → `drawGrid`. The grid keeps rendering while help is open.
+- **Grid layout:** `cols` × `rows` cells are spread over the full canvas width and height. The arrow keys clamp the grid to `MAX_COLS` × `MAX_ROWS`, because each cell is its own draw call. `camZ` is recomputed by `updateCamZ()` (in `setup` and `windowResized`) from the canvas height and the fixed `FOV`, so the grid fits the viewport at any window size.
+- **Per-cell transforms** are applied in this order: spring displacement, then `applyWiggle`, then optional rotation, then `drawShape3D`. Values that are the same for every cell (`millis()`, `dt`, `fill`) are computed once per frame in `drawGrid`.
+- **Cursor displacement** is physical, not a pure function of the mouse position:
+  - `updateCursor` eases a smoothed cursor (`cursorX`/`cursorY`) toward the mouse, and eases `cursorPresence` (0..1) in or out when the mouse enters or leaves the canvas. `mouseInside` is set by `pointermove`/`pointerleave`/`pointerdown` listeners on the canvas element (added in `setup`), not by p5's hooks. p5 listens on `window`, so using its hooks would let the pointer push cells and spawn ripples through the help panel.
+  - `stepSpring` gives each cell a target from a `(1 - q)^2` falloff, which reaches exactly zero at `pushRadius`. The target has an outward ring push plus a lift toward the camera, and a damped spring (semi-implicit Euler) moves the cell toward it.
+  - Spring state lives in `Float32Array`s indexed `j * cols + i`. They are reallocated, starting at rest, whenever the cell count changes.
+  - `dt` is clamped to 1/30 s so the springs stay stable after a stall.
+  - **Click ripple:** `spawnRipple` zeroes `cursorPresence`, which releases the cursor bump (it fades back in at `presenceFade`), and adds an expanding ring to `ripples` (capped at `MAX_RIPPLES`). `updateRipples` ages each ring once per frame. `stepSpring` adds each ring's crest-and-trough profile to the spring target rather than to the offset, so the springs smooth it.
+  - All feel parameters live in the `tune` object at the top of `sketch.js` and are read live every frame. `TUNE_DEFAULTS` is a snapshot used by the panel's Reset button.
+  - The WEBGL origin is the canvas center, so mouse coordinates are offset by half the width and height.
 - **Pyramid** geometry is built once in `setup` with `buildGeometry(() => drawPyramid(1))` + `computeNormals()` + `clearColors()` (so `fill()` still applies), then drawn with `scale(size); model(pyramidGeom)`. Don't go back to calling `drawPyramid` every frame: the immediate-mode version took about 40× longer per frame.
-- **Help screen** pauses rendering: `draw` draws the overlay once and calls `noLoop()`. Pressing H again calls `loop()`. Anything that changes what the help screen shows while it is up has to call `redraw()` (the font-load callback and C/B color picking already do).
+- **Help panel** (`panel.js`, `HelpPanel`): a frosted DOM overlay, toggled by `setHelp(open)` from H, Esc, the `?` button or the close button. Its sliders are generated from `TUNE_SLIDERS`, which sets each slider's label, range, step and unit. Each slider writes straight into `tune`. "Copy values" copies a `const tune = {...}` literal to paste back into `sketch.js` (this drops the inline comments). The slider ranges for spring stiffness and damping are kept within the semi-implicit Euler stability bound at dt = 1/30 (`k·dt² + 2·c·dt < 4`). While a slider has focus, `Controls.keyPressed` ignores the arrow keys so they adjust the slider. Clicking the canvas removes that focus.
 - **Color** uses `colorMode(HSB, 360, 100, 100)` throughout. Holding C or B maps mouse X to hue and mouse Y to saturation for the objects or the background.
-- `HelpOverlay` draws 2D content inside WEBGL by calling `resetMatrix()` and `ortho()`, then translating to the top-left corner. WEBGL text needs a font to be set, which is why `setup` sets `textFont("sans-serif")` right away and later replaces it with Roboto when that finishes loading.
 
-When adding a key binding, add it to both `Controls.keyPressed` and the help string in `HelpOverlay.draw`.
+When adding a key binding, add it to both `Controls.keyPressed` and the `.keys` list in `index.html`. When adding a value to `tune`, also add a slider entry for it to `TUNE_SLIDERS`.

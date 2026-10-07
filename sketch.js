@@ -18,13 +18,39 @@ let objectSat = 80;
 let bgHue = 50;
 let bgSat = 80;
 let bgBri = 100;
-const cursorInfluence = 80;
-const cursorPushMax = 10;
+// Motion tuning, read live every frame. The help panel (H) has a slider for
+// each value, and its "Copy values" button copies a replacement for this object.
+const tune = {
+  pushRadius: 170, // px; influence falls smoothly to exactly zero here
+  pushStrength: 22, // px of outward push at the strongest ring
+  pushLift: 40, // px toward the camera directly under the cursor
+  springStiffness: 140, // higher = cells react faster
+  springDamping: 15, // lower = more overshoot (critical is about 2*sqrt(stiffness), ~24)
+  cursorFollow: 14, // how fast the effect's center chases the mouse (per second)
+  presenceFade: 6, // how fast the effect fades in/out on mouse enter/leave
+  rippleStrength: 30, // px of lift at a click ripple's crest when it starts
+  rippleSpeed: 520, // px per second the ring travels outward
+  rippleWidth: 80, // px from the ring's crest to its edge
+  rippleLife: 1.2, // seconds until a ripple has fully faded
+};
+const TUNE_DEFAULTS = { ...tune };
+
+// Click ripples: rings in WEBGL coordinates. radius and amp are refreshed per frame.
+const MAX_RIPPLES = 8;
+const RIPPLE_SPREAD = 0.3; // px of outward push per px of ripple lift
+let ripples = [];
 
 let camZ = 0;
 
-// Reused by cursorPushOffset() to avoid allocating an object per cell per frame.
-const pushOut = { x: 0, y: 0, z: 0 };
+// Smoothed cursor in WEBGL (center-origin) coordinates, and its 0..1 presence.
+let cursorX = 0;
+let cursorY = 0;
+let cursorPresence = 0;
+let mouseInside = false;
+
+// Per-cell spring state (offset + velocity), indexed j * cols + i.
+let springCount = 0;
+let offX, offY, offZ, velX, velY, velZ;
 
 let showHelp = false;
 let cHeld = false;
@@ -33,15 +59,25 @@ let rotating = false;
 let wiggle = true;
 
 let controls;
-let helpOverlay;
-let uiFont = null;
+let helpPanel;
 let cols = 32;
 let rows = 18;
 
 function setup() {
   // Cap density so very high-DPI screens (3x phones) don't shade 9x the pixels.
   pixelDensity(Math.min(2, displayDensity()));
-  createCanvas(windowWidth, windowHeight, WEBGL);
+  const cnv = createCanvas(windowWidth, windowHeight, WEBGL);
+  // Pointer listeners on the canvas itself (p5's hooks fire on window), so the
+  // help panel blocks the push and clicks on it don't make ripples. Leaving
+  // fades the displacement out instead of freezing it.
+  cnv.elt.addEventListener("pointermove", () => (mouseInside = true));
+  cnv.elt.addEventListener("pointerleave", () => (mouseInside = false));
+  cnv.elt.addEventListener("pointerdown", (e) => {
+    mouseInside = true;
+    // Hand the keyboard back to the grid if a panel slider had focus.
+    if (document.activeElement) document.activeElement.blur();
+    spawnRipple(e.offsetX - width * 0.5, e.offsetY - height * 0.5);
+  });
   colorMode(HSB, 360, 100, 100);
   noStroke();
   noCursor();
@@ -52,24 +88,14 @@ function setup() {
   pyramidGeom.computeNormals();
   // Drop baked vertex colors so fill() still controls the pyramid's color.
   if (pyramidGeom.clearColors) pyramidGeom.clearColors();
-  // Set an immediate safe default to satisfy WEBGL text requirements.
-  textFont("sans-serif");
-
-  // Load a nicer font asynchronously; fall back to the default if it fails.
-  loadFont(
-    "https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxP.ttf",
-    (font) => {
-      uiFont = font;
-      textFont(uiFont);
-      if (showHelp) redraw(); // help is drawn once with noLoop(); refresh it
-    },
-    () => {
-      uiFont = null;
-    }
-  );
 
   controls = new Controls();
-  helpOverlay = new HelpOverlay();
+  helpPanel = new HelpPanel();
+}
+
+function setHelp(open) {
+  showHelp = open;
+  helpPanel.setOpen(open);
 }
 
 function updateCamZ() {
@@ -83,14 +109,7 @@ function windowResized() {
 
 function draw() {
   background(bgHue, bgSat, bgBri);
-
-  if (showHelp) {
-    // The overlay is static, so draw it once and pause until help is closed.
-    helpOverlay.draw();
-    noLoop();
-    return;
-  }
-
+  // The help panel is a DOM overlay, so the grid keeps running behind it.
   updateCamera();
   setupLights();
   drawGrid();
@@ -107,9 +126,12 @@ function drawGrid() {
 
   // Per-frame values shared by every cell.
   const ms = millis();
-  const mx = mouseX - width * 0.5;
-  const my = mouseY - height * 0.5;
   const rt = ms * 0.001 * 1.2;
+  // Clamp dt so a stall (e.g. a tab switch) can't blow up the springs.
+  const dt = Math.min(deltaTime / 1000, 1 / 30);
+  updateCursor(dt);
+  updateRipples(dt);
+  ensureSprings(c * r);
 
   fill(objectHue, objectSat, 100);
 
@@ -117,10 +139,11 @@ function drawGrid() {
     for (let i = 0; i < c; i++) {
       const x = startX + i * spacingX;
       const y = startY + j * spacingY;
+      const idx = j * c + i;
 
-      const offset = cursorPushOffset(x, y, i, j, mx, my, ms);
+      stepSpring(idx, x, y, dt);
       push();
-      translate(x + offset.x, y + offset.y, offset.z);
+      translate(x + offX[idx], y + offY[idx], offZ[idx]);
       applyWiggle(i, j, ms);
       if (rotating) {
         rotateY(rt + i * 0.1);
@@ -154,55 +177,105 @@ function applyWiggle(i, j, ms) {
   rotateZ(wigZ * 0.03);
 }
 
-// Returns the shared pushOut object; read it before the next call.
-function cursorPushOffset(x, y, i, j, mx, my, ms) {
-  const dx = x - mx;
-  const dy = y - my;
-  const d = Math.hypot(dx, dy);
-  if (d === 0 || d > cursorInfluence * 2.2) {
-    pushOut.x = 0;
-    pushOut.y = 0;
-    pushOut.z = 0;
-    return pushOut;
+// Ease the effect's center toward the mouse and fade it in/out with presence.
+function updateCursor(dt) {
+  const mx = mouseX - width * 0.5;
+  const my = mouseY - height * 0.5;
+  if (mouseInside && cursorPresence < 0.01) {
+    // Re-entering: start at the mouse instead of sweeping in from the old spot.
+    cursorX = mx;
+    cursorY = my;
+  }
+  const follow = 1 - Math.exp(-tune.cursorFollow * dt);
+  cursorX += (mx - cursorX) * follow;
+  cursorY += (my - cursorY) * follow;
+  const fade = 1 - Math.exp(-tune.presenceFade * dt);
+  cursorPresence += ((mouseInside ? 1 : 0) - cursorPresence) * fade;
+}
+
+// A click lets go of the cursor bump: the push drops out (then fades back in at
+// presenceFade) while a ring carries the motion outward and dies away. The
+// springs smooth both, so nothing snaps.
+function spawnRipple(x, y) {
+  cursorPresence = 0;
+  ripples.push({ x, y, age: 0, radius: 0, amp: 0 });
+  if (ripples.length > MAX_RIPPLES) ripples.shift();
+}
+
+function updateRipples(dt) {
+  if (ripples.length === 0) return;
+  for (const rp of ripples) {
+    rp.age += dt;
+    const life = rp.age / tune.rippleLife;
+    rp.radius = rp.age * tune.rippleSpeed;
+    rp.amp = life < 1 ? tune.rippleStrength * (1 - life) * (1 - life) : 0;
+  }
+  ripples = ripples.filter((rp) => rp.amp > 0);
+}
+
+// (Re)allocate spring buffers when the cell count changes; cells restart at rest.
+function ensureSprings(n) {
+  if (n === springCount) return;
+  springCount = n;
+  offX = new Float32Array(n);
+  offY = new Float32Array(n);
+  offZ = new Float32Array(n);
+  velX = new Float32Array(n);
+  velY = new Float32Array(n);
+  velZ = new Float32Array(n);
+}
+
+// Normalizes the radial push so its strongest ring (d = R/sqrt(5)) equals pushStrength.
+const RADIAL_PEAK = (1 / Math.sqrt(5)) * Math.pow(1 - 1 / 5, 2);
+
+// Advance one cell's damped spring toward its displacement target.
+function stepSpring(idx, x, y, dt) {
+  let tx = 0;
+  let ty = 0;
+  let tz = 0;
+  const dx = x - cursorX;
+  const dy = y - cursorY;
+  const R = tune.pushRadius;
+  const q = (dx * dx + dy * dy) / (R * R);
+  if (q < 1 && cursorPresence > 0.001) {
+    // (1 - q)^2 falls off smoothly and reaches exactly zero at pushRadius, so
+    // there is no visible edge. Scaling the push by dx / R (rather than the unit
+    // direction) zeroes it at the center and peaks in a ring around the cursor.
+    const w = (1 - q) * (1 - q) * cursorPresence;
+    const radial = (tune.pushStrength / (RADIAL_PEAK * R)) * w;
+    tx = dx * radial;
+    ty = dy * radial;
+    tz = tune.pushLift * w;
   }
 
-  // Two-stage falloff: strong core (exp), softer tail (quadratic) to blur the edge.
-  let w;
-  if (d <= cursorInfluence) {
-    w = Math.exp(-((d * d) / (cursorInfluence * cursorInfluence)));
-  } else {
-    const tail = (d - cursorInfluence) / (cursorInfluence * 1.2);
-    w = Math.max(0, 1 - tail * tail * 0.65) * 0.25; // soft tail weight
-  }
-  const baseMag = cursorPushMax * w;
-
-  // Per-cell lagged wobble for a springy feel.
-  const t = ms * 0.005;
-  const phase = (i + j) * 0.15;
-  const wobble = 1 + 0.25 * Math.sin(t - phase);
-  const centerTaper = 0.55 + 0.45 * (d / cursorInfluence); // reduce push near cursor center
-  const mag = baseMag * wobble * centerTaper;
-
-  const nx = dx / d;
-  const ny = dy / d;
-  let px = nx * mag;
-  let py = ny * mag;
-  let pz = mag * 0.8;
-
-  // Subtle stochastic jitter in the tail to mask the cutoff.
-  if (d > cursorInfluence) {
-    const jitterSeed = (i * 73856093) ^ (j * 19349663);
-    const jitterT = ms * 0.001 + jitterSeed;
-    const jitterAmp = 0.4 * w; // very small
-    px += (noise(jitterT, 0) - 0.5) * jitterAmp;
-    py += (noise(0, jitterT) - 0.5) * jitterAmp;
-    pz += (noise(jitterT, jitterT) - 0.5) * jitterAmp;
+  for (let n = 0; n < ripples.length; n++) {
+    const rp = ripples[n];
+    const rx = x - rp.x;
+    const ry = y - rp.y;
+    const d = Math.sqrt(rx * rx + ry * ry);
+    const u = (d - rp.radius) / tune.rippleWidth;
+    if (u <= -1 || u >= 1) continue;
+    // A crest with shallow troughs on each side. The profile is zero at |u| = 1,
+    // so the ring has no hard edge.
+    const s = 1 - u * u;
+    const h = rp.amp * s * s * Math.cos(Math.PI * u);
+    tz += h;
+    if (d > 0.001) {
+      const k = (h * RIPPLE_SPREAD) / d;
+      tx += rx * k;
+      ty += ry * k;
+    }
   }
 
-  pushOut.x = px;
-  pushOut.y = py;
-  pushOut.z = pz;
-  return pushOut;
+  // Semi-implicit Euler: stable for the slider ranges in panel.js with dt <= 1/30.
+  const k = tune.springStiffness;
+  const c = tune.springDamping;
+  velX[idx] += (k * (tx - offX[idx]) - c * velX[idx]) * dt;
+  velY[idx] += (k * (ty - offY[idx]) - c * velY[idx]) * dt;
+  velZ[idx] += (k * (tz - offZ[idx]) - c * velZ[idx]) * dt;
+  offX[idx] += velX[idx] * dt;
+  offY[idx] += velY[idx] * dt;
+  offZ[idx] += velZ[idx] * dt;
 }
 
 // Adapted from learningprocessing.com pyramid tutorial.
@@ -247,7 +320,8 @@ function setupLights() {
   pointLight(0, 0, 100, 0, 0, 0);
 }
 
-// Re-applied every frame because HelpOverlay switches to ortho().
+// Cheap enough to re-apply every frame, which also covers resizeCanvas()
+// resetting the projection.
 function updateCamera() {
   camera(0, 0, camZ, 0, 0, 0, 0, 1, 0);
   perspective(FOV, width / height, 1, camZ * 4);
@@ -266,10 +340,15 @@ function keyReleased() {
   }
 }
 
+// Only for C/B color picking; the push uses the canvas pointer listeners in setup().
 function mouseMoved() {
   if (controls) {
     controls.mouseMoved();
   }
+}
+
+function mouseDragged() {
+  mouseMoved();
 }
 
 function updateColorsFromMouse() {
@@ -288,20 +367,25 @@ function updateColorsFromMouse() {
 // Helper classes translated to JavaScript
 class Controls {
   keyPressed() {
-    if (keyCode === LEFT_ARROW) {
-      cols = max(1, cols - 1);
-    } else if (keyCode === RIGHT_ARROW) {
-      cols = min(MAX_COLS, cols + 1);
-    } else if (keyCode === UP_ARROW) {
-      rows = min(MAX_ROWS, rows + 1);
-    } else if (keyCode === DOWN_ARROW) {
-      rows = max(1, rows - 1);
+    // While a panel slider has focus, the arrow keys nudge it instead.
+    const sliderFocused = document.activeElement && document.activeElement.tagName === "INPUT";
+    if (!sliderFocused) {
+      if (keyCode === LEFT_ARROW) {
+        cols = max(1, cols - 1);
+      } else if (keyCode === RIGHT_ARROW) {
+        cols = min(MAX_COLS, cols + 1);
+      } else if (keyCode === UP_ARROW) {
+        rows = min(MAX_ROWS, rows + 1);
+      } else if (keyCode === DOWN_ARROW) {
+        rows = max(1, rows - 1);
+      }
     }
 
     const k = typeof key === "string" ? key.toLowerCase() : "";
-    if (k === "h") {
-      showHelp = !showHelp;
-      if (!showHelp) loop(); // draw() paused itself with noLoop() while help was up
+    if (keyCode === ESCAPE) {
+      if (showHelp) setHelp(false);
+    } else if (k === "h") {
+      setHelp(!showHelp);
     } else if (k === "s") {
       currentShape = (currentShape + 1) % 3;
     } else if (k === "r") {
@@ -335,46 +419,6 @@ class Controls {
   mouseMoved() {
     if (cHeld || bHeld) {
       updateColorsFromMouse();
-      if (showHelp) redraw(); // keep the paused help screen's background in sync
     }
-  }
-}
-
-class HelpOverlay {
-  draw() {
-    resetMatrix();
-    ortho();
-    // Move origin to top-left of the canvas for 2D overlay drawing.
-    translate(-width * 0.5, -height * 0.5, 0);
-
-    rectMode(CORNER);
-    noStroke();
-    fill(0, 0, 0, 180);
-    rect(0, 0, width, height);
-
-    fill(0, 0, 100);
-    textAlign(LEFT, TOP);
-    textSize(15);
-    if (uiFont) {
-      textFont(uiFont);
-    } else {
-      textFont("sans-serif");
-    }
-    const help =
-      "Interactive 3D Matrix\n\n" +
-      "H: Toggle this help screen\n" +
-      "P: Export current frame as a PNG\n" +
-      "S: Cycle shape (Cube, Sphere, Pyramid)\n" +
-      "LEFT / RIGHT: Decrease / increase columns\n" +
-      "UP / DOWN: Increase / decrease rows\n" +
-      "K / L: Decrease / increase shape size\n" +
-      "R: Toggle rotation\n" +
-      "W: Toggle wiggle\n" +
-      "Move mouse: push objects away from cursor\n" +
-      "Hold C + mouse: object hue/sat\n" +
-      "Hold B + mouse: background hue/sat\n" +
-      "For color, left-to-right mouse movement changes hue.\n" +
-      "Top-to-bottom mouse movement changes saturation.\n";
-    text(help, 24, 24);
   }
 }

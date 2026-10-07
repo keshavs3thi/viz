@@ -6,7 +6,33 @@
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/p5.js"></script>
     <!-- p5.sound not needed for this sketch; removed to avoid worklet errors and 404 sourcemaps -->
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
+      :root {
+        --glass: rgba(246, 246, 248, 0.78);
+        --text: #1d1d1f;
+        --secondary: #6e6e73;
+        --hairline: rgba(0, 0, 0, 0.08);
+        --fill: rgba(0, 0, 0, 0.05);
+        --track: rgba(0, 0, 0, 0.1);
+        --accent: #0071e3;
+        --shadow: 0 24px 60px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.06);
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --glass: rgba(30, 30, 32, 0.74);
+          --text: #f5f5f7;
+          --secondary: #a1a1a6;
+          --hairline: rgba(255, 255, 255, 0.1);
+          --fill: rgba(255, 255, 255, 0.08);
+          --track: rgba(255, 255, 255, 0.16);
+          --accent: #0a84ff;
+          --shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+      }
+
       html, body {
         margin: 0;
         padding: 0;
@@ -16,6 +42,262 @@
       }
       canvas {
         display: block;
+        touch-action: none;
+      }
+
+      .glass {
+        color: var(--text);
+        background: var(--glass);
+        -webkit-backdrop-filter: blur(30px) saturate(180%);
+        backdrop-filter: blur(30px) saturate(180%);
+        border: 0.5px solid var(--hairline);
+        box-shadow: var(--shadow);
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* Help panel */
+      #help {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        box-sizing: border-box;
+        width: min(340px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        max-height: calc(100dvh - 32px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: var(--track) transparent;
+        padding: 20px 20px 18px;
+        border-radius: 22px;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-6px) scale(0.98);
+        transform-origin: top right;
+        transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+          visibility 0s linear 0.22s;
+      }
+      #help.open {
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+        transition-delay: 0s;
+      }
+      #help header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 20px;
+      }
+      #help .eyebrow {
+        margin: 0 0 2px;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        color: var(--secondary);
+      }
+      #help h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+      }
+      #help h2 {
+        margin: 0 0 6px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--secondary);
+      }
+      #help section + section,
+      #tuning {
+        margin-top: 24px;
+      }
+      #help .close {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: var(--fill);
+        color: var(--secondary);
+      }
+
+      .keys {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .keys li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 7px 0;
+        font-size: 14px;
+        border-top: 0.5px solid var(--hairline);
+      }
+      .keys li:first-child {
+        border-top: 0;
+      }
+      .keys li > span:last-child {
+        flex-shrink: 0;
+      }
+      kbd {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        min-width: 22px;
+        height: 22px;
+        padding: 0 6px;
+        border-radius: 6px;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        background: var(--fill);
+        box-shadow: inset 0 -0.5px 0 var(--hairline);
+      }
+      kbd + kbd {
+        margin-left: 4px;
+      }
+
+      .slider {
+        display: block;
+        padding: 7px 0 3px;
+      }
+      .slider-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 6px;
+        font-size: 14px;
+      }
+      .slider output {
+        color: var(--secondary);
+        font-variant-numeric: tabular-nums;
+      }
+      input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        display: block;
+        width: 100%;
+        height: 20px;
+        margin: 0;
+        background: transparent;
+        --p: 50%;
+      }
+      input[type="range"]::-webkit-slider-runnable-track {
+        height: 4px;
+        border-radius: 2px;
+        background: linear-gradient(to right, var(--accent) var(--p), var(--track) var(--p));
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 20px;
+        height: 20px;
+        margin-top: -8px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+      input[type="range"]::-moz-range-track {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--track);
+      }
+      input[type="range"]::-moz-range-progress {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--accent);
+      }
+      input[type="range"]::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        border: 0;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+      input[type="range"]:focus-visible {
+        outline: none;
+      }
+      input[type="range"]:focus-visible::-webkit-slider-thumb {
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent),
+          0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+      input[type="range"]:focus-visible::-moz-range-thumb {
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent),
+          0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+
+      #help .note {
+        margin: 20px 0 0;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--secondary);
+      }
+      #help footer {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      #help footer button {
+        flex: 1;
+        height: 34px;
+        border: 0;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        background: var(--fill);
+      }
+      #help footer .primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      #help button:active {
+        transform: scale(0.97);
+      }
+
+      #help-button {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 15px;
+        font-weight: 600;
+        opacity: 0.7;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+      #help-button:hover {
+        opacity: 1;
+      }
+      #help-button.hidden {
+        opacity: 0;
+        pointer-events: none;
+        transform: scale(0.9);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #help, #help-button {
+          transition: none;
+        }
       }
     </style>
 
@@ -23,6 +305,53 @@
   <body>
     <main>
     </main>
+
+    <button id="help-button" class="glass" type="button" aria-label="Show controls (H)" title="Controls (H)">?</button>
+
+    <aside id="help" class="glass" aria-label="Controls">
+      <header>
+        <div>
+          <p class="eyebrow">3DVIZ</p>
+          <h1>Controls</h1>
+        </div>
+        <button class="close" type="button" data-close aria-label="Close controls (H)">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+      </header>
+
+      <section>
+        <h2>Keyboard</h2>
+        <ul class="keys">
+          <li><span>Show or hide controls</span><span><kbd>H</kbd></span></li>
+          <li><span>Cycle shape</span><span><kbd>S</kbd></span></li>
+          <li><span>Columns</span><span><kbd>&larr;</kbd><kbd>&rarr;</kbd></span></li>
+          <li><span>Rows</span><span><kbd>&darr;</kbd><kbd>&uarr;</kbd></span></li>
+          <li><span>Shape size</span><span><kbd>K</kbd><kbd>L</kbd></span></li>
+          <li><span>Rotation</span><span><kbd>R</kbd></span></li>
+          <li><span>Wiggle</span><span><kbd>W</kbd></span></li>
+          <li><span>Save frame as PNG</span><span><kbd>P</kbd></span></li>
+          <li><span>Object color</span><span>Hold <kbd>C</kbd></span></li>
+          <li><span>Background color</span><span>Hold <kbd>B</kbd></span></li>
+        </ul>
+      </section>
+
+      <!-- Sliders are generated from TUNE_SLIDERS in panel.js. -->
+      <div id="tuning"></div>
+
+      <p class="note">
+        Move the pointer to push the grid, and click to send a ripple. While holding C or B,
+        moving left to right sets hue and top to bottom sets saturation.
+      </p>
+
+      <footer>
+        <button type="button" data-reset>Reset</button>
+        <button type="button" class="primary" data-copy>Copy values</button>
+      </footer>
+    </aside>
+
+    <script src="panel.js"></script>
     <script src="sketch.js"></script>
   </body>
 </html>
