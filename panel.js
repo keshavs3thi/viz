@@ -29,6 +29,14 @@ const TUNE_SLIDERS = [
       { key: "rippleLife", label: "Duration", min: 0.3, max: 3, step: 0.1, unit: "s" },
     ],
   },
+  {
+    title: "Idle",
+    items: [
+      { key: "idleTimeout", label: "Timeout", min: 0.5, max: 10, step: 0.5, unit: "s" },
+      { key: "idleFade", label: "Fade out speed", min: 0.1, max: 4, step: 0.1, unit: "/s" },
+      { key: "wakeFade", label: "Wake speed", min: 2, max: 40, step: 1, unit: "/s" },
+    ],
+  },
 ];
 
 function createEl(tag, className, text) {

@@ -29,6 +29,7 @@ Opening `index.html` directly via `file://` mostly works, but the help panel's "
   - `stepSpring` gives each cell a target from a `(1 - q)^2` falloff, which reaches exactly zero at `pushRadius`. The target has an outward ring push plus a lift toward the camera, and a damped spring (semi-implicit Euler) moves the cell toward it.
   - Spring state lives in `Float32Array`s indexed `j * cols + i`. They are reallocated, starting at rest, whenever the cell count changes.
   - `dt` is clamped to 1/30 s so the springs stay stable after a stall.
+  - **Idle:** once the pointer has been still on the canvas for `idleTimeout` seconds, presence fades out at the slow `idleFade` rate. The next real move fades it back in at the fast `wakeFade` rate (the `waking` flag). Activity is tracked in `lastMoveMs`, which is set by `pointermove` (moves with zero `movementX`/`movementY` are ignored) and `pointerdown`.
   - **Click ripple:** `spawnRipple` zeroes `cursorPresence`, which releases the cursor bump (it fades back in at `presenceFade`), and adds an expanding ring to `ripples` (capped at `MAX_RIPPLES`). `updateRipples` ages each ring once per frame. `stepSpring` adds each ring's crest-and-trough profile to the spring target rather than to the offset, so the springs smooth it.
   - All feel parameters live in the `tune` object at the top of `sketch.js` and are read live every frame. `TUNE_DEFAULTS` is a snapshot used by the panel's Reset button.
   - The WEBGL origin is the canvas center, so mouse coordinates are offset by half the width and height.

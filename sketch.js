@@ -21,17 +21,20 @@ let bgBri = 100;
 // Motion tuning, read live every frame. The help panel (H) has a slider for
 // each value, and its "Copy values" button copies a replacement for this object.
 const tune = {
-  pushRadius: 170, // px; influence falls smoothly to exactly zero here
-  pushStrength: 22, // px of outward push at the strongest ring
-  pushLift: 40, // px toward the camera directly under the cursor
-  springStiffness: 140, // higher = cells react faster
-  springDamping: 15, // lower = more overshoot (critical is about 2*sqrt(stiffness), ~24)
-  cursorFollow: 14, // how fast the effect's center chases the mouse (per second)
-  presenceFade: 6, // how fast the effect fades in/out on mouse enter/leave
-  rippleStrength: 30, // px of lift at a click ripple's crest when it starts
-  rippleSpeed: 520, // px per second the ring travels outward
-  rippleWidth: 80, // px from the ring's crest to its edge
-  rippleLife: 1.2, // seconds until a ripple has fully faded
+  pushRadius: 170,
+  pushStrength: 7,
+  pushLift: 40,
+  springStiffness: 140,
+  springDamping: 15,
+  cursorFollow: 15,
+  presenceFade: 4,
+  rippleStrength: 30,
+  rippleSpeed: 760,
+  rippleWidth: 80,
+  rippleLife: 1.2,
+  idleTimeout: 3,
+  idleFade: 0.6,
+  wakeFade: 14,
 };
 const TUNE_DEFAULTS = { ...tune };
 
@@ -47,6 +50,11 @@ let cursorX = 0;
 let cursorY = 0;
 let cursorPresence = 0;
 let mouseInside = false;
+// Idle: the pointer has sat still on the canvas for idleTimeout seconds, so the
+// effect fades out slowly. Waking: it moved again, so the effect fades back in fast.
+let lastMoveMs = 0;
+let idle = false;
+let waking = false;
 
 // Per-cell spring state (offset + velocity), indexed j * cols + i.
 let springCount = 0;
@@ -70,10 +78,15 @@ function setup() {
   // Pointer listeners on the canvas itself (p5's hooks fire on window), so the
   // help panel blocks the push and clicks on it don't make ripples. Leaving
   // fades the displacement out instead of freezing it.
-  cnv.elt.addEventListener("pointermove", () => (mouseInside = true));
+  cnv.elt.addEventListener("pointermove", (e) => {
+    mouseInside = true;
+    // Browsers can send zero-distance moves (e.g. after layout); those aren't activity.
+    if (e.movementX !== 0 || e.movementY !== 0) lastMoveMs = millis();
+  });
   cnv.elt.addEventListener("pointerleave", () => (mouseInside = false));
   cnv.elt.addEventListener("pointerdown", (e) => {
     mouseInside = true;
+    lastMoveMs = millis();
     // Hand the keyboard back to the grid if a panel slider had focus.
     if (document.activeElement) document.activeElement.blur();
     spawnRipple(e.offsetX - width * 0.5, e.offsetY - height * 0.5);
@@ -189,8 +202,15 @@ function updateCursor(dt) {
   const follow = 1 - Math.exp(-tune.cursorFollow * dt);
   cursorX += (mx - cursorX) * follow;
   cursorY += (my - cursorY) * follow;
-  const fade = 1 - Math.exp(-tune.presenceFade * dt);
-  cursorPresence += ((mouseInside ? 1 : 0) - cursorPresence) * fade;
+  const active = mouseInside && millis() - lastMoveMs < tune.idleTimeout * 1000;
+  if (active && idle) waking = true;
+  idle = mouseInside && !active;
+  let rate = tune.presenceFade;
+  if (idle) rate = tune.idleFade;
+  else if (waking) rate = tune.wakeFade;
+  const fade = 1 - Math.exp(-rate * dt);
+  cursorPresence += ((active ? 1 : 0) - cursorPresence) * fade;
+  if (waking && (!active || cursorPresence > 0.98)) waking = false;
 }
 
 // A click lets go of the cursor bump: the push drops out (then fades back in at
@@ -198,6 +218,9 @@ function updateCursor(dt) {
 // springs smooth both, so nothing snaps.
 function spawnRipple(x, y) {
   cursorPresence = 0;
+  // Recover at presenceFade even if the click woke the cursor from idle.
+  idle = false;
+  waking = false;
   ripples.push({ x, y, age: 0, radius: 0, amp: 0 });
   if (ripples.length > MAX_RIPPLES) ripples.shift();
 }
