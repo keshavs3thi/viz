@@ -46,10 +46,31 @@ function createEl(tag, className, text) {
   return el;
 }
 
+// localStorage flag: once the nudge is dismissed or the panel opened, it never returns.
+const NUDGE_KEY = "3dviz-nudge-dismissed";
+const NUDGE_DELAY_MS = 1200;
+
+// Storage can be unavailable or throw (private windows, blocked site data);
+// then the nudge just behaves per page load.
+function readFlag(key) {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch (e) {
+    return false;
+  }
+}
+
+function writeFlag(key) {
+  try {
+    localStorage.setItem(key, "1");
+  } catch (e) {}
+}
+
 class HelpPanel {
   constructor() {
     this.el = document.getElementById("help");
     this.button = document.getElementById("help-button");
+    this.nudge = document.getElementById("nudge");
     this.sliders = {}; // key -> { input, output, spec }
     this.buildSliders(document.getElementById("tuning"));
 
@@ -58,9 +79,22 @@ class HelpPanel {
     this.el.querySelector("[data-reset]").addEventListener("click", () => this.reset());
     const copy = this.el.querySelector("[data-copy]");
     copy.addEventListener("click", () => this.copy(copy));
+
+    this.nudge.querySelector("[data-dismiss]").addEventListener("click", () => this.dismissNudge());
+    if (!readFlag(NUDGE_KEY)) {
+      setTimeout(() => {
+        if (!readFlag(NUDGE_KEY)) this.nudge.classList.add("show");
+      }, NUDGE_DELAY_MS);
+    }
+  }
+
+  dismissNudge() {
+    this.nudge.classList.remove("show");
+    writeFlag(NUDGE_KEY);
   }
 
   setOpen(open) {
+    if (open) this.dismissNudge();
     this.el.classList.toggle("open", open);
     this.button.classList.toggle("hidden", open);
     if (!open && this.el.contains(document.activeElement)) document.activeElement.blur();

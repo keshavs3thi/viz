@@ -124,7 +124,7 @@
       #tuning {
         margin-top: 24px;
       }
-      #help .close {
+      .close {
         display: grid;
         place-items: center;
         width: 28px;
@@ -244,8 +244,13 @@
           0 2px 6px rgba(0, 0, 0, 0.2);
       }
 
+      #help .subtitle {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--secondary);
+      }
       #help .note {
-        margin: 20px 0 0;
+        margin: 8px 0 0;
         font-size: 12px;
         line-height: 1.45;
         color: var(--secondary);
@@ -294,8 +299,48 @@
         transform: scale(0.9);
       }
 
+      /* First-visit nudge, sitting to the left of the ? button. */
+      #nudge {
+        position: fixed;
+        right: 62px;
+        bottom: 16px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 36px;
+        max-width: calc(100vw - 78px);
+        padding: 0 7px 0 14px;
+        border-radius: 18px;
+        font-size: 13px;
+        white-space: nowrap;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateX(6px);
+        transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+          visibility 0s linear 0.3s;
+      }
+      #nudge.show {
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+        transition-delay: 0s;
+      }
+      #nudge span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #nudge kbd {
+        margin: 0 2px;
+      }
+      #nudge .close {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+      }
+
       @media (prefers-reduced-motion: reduce) {
-        #help, #help-button {
+        #help, #help-button, #nudge {
           transition: none;
         }
       }
@@ -308,11 +353,21 @@
 
     <button id="help-button" class="glass" type="button" aria-label="Show controls (H)" title="Controls (H)">?</button>
 
+    <div id="nudge" class="glass" role="status">
+      <span>Press <kbd>H</kbd> or click <strong>?</strong> for controls</span>
+      <button class="close" type="button" data-dismiss aria-label="Dismiss tip">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
+
     <aside id="help" class="glass" aria-label="Controls">
       <header>
         <div>
           <p class="eyebrow">3DVIZ</p>
           <h1>Controls</h1>
+          <p class="subtitle">Move the pointer to push the grid. Click to send a ripple.</p>
         </div>
         <button class="close" type="button" data-close aria-label="Close controls (H)">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
@@ -320,6 +375,17 @@
           </svg>
         </button>
       </header>
+
+      <section>
+        <h2>Color</h2>
+        <ul class="keys">
+          <li><span>Shape color</span><span>Hold <kbd>C</kbd></span></li>
+          <li><span>Background color</span><span>Hold <kbd>B</kbd></span></li>
+        </ul>
+        <p class="note">
+          While holding, move the mouse left to right to set hue and top to bottom to set saturation.
+        </p>
+      </section>
 
       <section>
         <h2>Keyboard</h2>
@@ -332,18 +398,11 @@
           <li><span>Rotation</span><span><kbd>R</kbd></span></li>
           <li><span>Wiggle</span><span><kbd>W</kbd></span></li>
           <li><span>Save frame as PNG</span><span><kbd>P</kbd></span></li>
-          <li><span>Object color</span><span>Hold <kbd>C</kbd></span></li>
-          <li><span>Background color</span><span>Hold <kbd>B</kbd></span></li>
         </ul>
       </section>
 
       <!-- Sliders are generated from TUNE_SLIDERS in panel.js. -->
       <div id="tuning"></div>
-
-      <p class="note">
-        Move the pointer to push the grid, and click to send a ripple. While holding C or B,
-        moving left to right sets hue and top to bottom sets saturation.
-      </p>
 
       <footer>
         <button type="button" data-reset>Reset</button>
