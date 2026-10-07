@@ -255,6 +255,38 @@
         line-height: 1.45;
         color: var(--secondary);
       }
+      #help .state-sliders {
+        margin-top: 10px;
+      }
+      #help .note kbd {
+        min-width: 18px;
+        height: 18px;
+        padding: 0 4px;
+        font-size: 11px;
+        vertical-align: 1px;
+      }
+      .slider-keys {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        margin-left: 8px;
+        vertical-align: 1px;
+      }
+      .slider-keys kbd {
+        min-width: 18px;
+        height: 18px;
+        padding: 0 4px;
+        border-radius: 5px;
+        font-size: 11px;
+      }
+      .slider-keys kbd + kbd {
+        margin-left: 0;
+      }
+      .slider-keys .axis {
+        margin-left: 2px;
+        font-size: 12px;
+        color: var(--secondary);
+      }
       #help footer {
         display: flex;
         gap: 8px;
@@ -277,10 +309,33 @@
         transform: scale(0.97);
       }
 
-      #help-button {
+      /* Bottom-right group: nudge, fullscreen button, ? button. The group itself
+         ignores the pointer so its empty space doesn't block the canvas. */
+      #corner {
         position: fixed;
         right: 16px;
         bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+      #corner > * {
+        pointer-events: auto;
+      }
+      #corner.hidden {
+        opacity: 0;
+        transform: scale(0.96);
+        transform-origin: bottom right;
+      }
+      #corner.hidden > * {
+        pointer-events: none;
+      }
+      .corner-button {
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
         width: 36px;
         height: 36px;
         padding: 0;
@@ -288,31 +343,32 @@
         font-size: 15px;
         font-weight: 600;
         opacity: 0.7;
-        transition: opacity 0.2s ease, transform 0.2s ease;
+        transition: opacity 0.2s ease;
       }
-      #help-button:hover {
+      .corner-button:hover {
         opacity: 1;
       }
-      #help-button.hidden {
-        opacity: 0;
-        pointer-events: none;
-        transform: scale(0.9);
+      /* Show the expand icon normally and the collapse icon in fullscreen. */
+      #fullscreen-button .exit,
+      #fullscreen-button.active .enter {
+        display: none;
+      }
+      #fullscreen-button.active .exit {
+        display: block;
       }
 
-      /* First-visit nudge, sitting to the left of the ? button. */
+      /* First-visit nudge, sitting to the left of the corner buttons. */
       #nudge {
-        position: fixed;
-        right: 62px;
-        bottom: 16px;
         box-sizing: border-box;
         display: flex;
         align-items: center;
-        gap: 10px;
-        height: 36px;
-        max-width: calc(100vw - 78px);
-        padding: 0 7px 0 14px;
-        border-radius: 18px;
-        font-size: 13px;
+        gap: 12px;
+        height: 45px;
+        margin-right: 2px;
+        max-width: calc(100vw - 122px);
+        padding: 0 9px 0 18px;
+        border-radius: 23px;
+        font-size: 16px;
         white-space: nowrap;
         opacity: 0;
         visibility: hidden;
@@ -331,16 +387,23 @@
         text-overflow: ellipsis;
       }
       #nudge kbd {
+        min-width: 27px;
+        height: 27px;
         margin: 0 2px;
+        font-size: 15px;
       }
       #nudge .close {
         flex-shrink: 0;
-        width: 22px;
-        height: 22px;
+        width: 28px;
+        height: 28px;
+      }
+      #nudge .close svg {
+        width: 12px;
+        height: 12px;
       }
 
       @media (prefers-reduced-motion: reduce) {
-        #help, #help-button, #nudge {
+        #help, #corner, #nudge {
           transition: none;
         }
       }
@@ -351,15 +414,24 @@
     <main>
     </main>
 
-    <button id="help-button" class="glass" type="button" aria-label="Show controls (H)" title="Controls (H)">?</button>
-
-    <div id="nudge" class="glass" role="status">
-      <span>Press <kbd>H</kbd> or click <strong>?</strong> for controls</span>
-      <button class="close" type="button" data-dismiss aria-label="Dismiss tip">
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+    <div id="corner">
+      <div id="nudge" class="glass" role="status">
+        <span>Press <kbd>H</kbd> or click <strong>?</strong> for controls</span>
+        <button class="close" type="button" data-dismiss aria-label="Dismiss tip">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+      <button id="fullscreen-button" class="glass corner-button" type="button" aria-label="Enter full screen (F)" title="Full screen (F)">
+        <svg class="enter" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9" />
+        </svg>
+        <svg class="exit" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 1v4H1M13 5H9V1M9 13V9h4M1 9h4v4" />
         </svg>
       </button>
+      <button id="help-button" class="glass corner-button" type="button" aria-label="Show controls (H)" title="Controls (H)">?</button>
     </div>
 
     <aside id="help" class="glass" aria-label="Controls">
@@ -378,13 +450,16 @@
 
       <section>
         <h2>Color</h2>
-        <ul class="keys">
-          <li><span>Shape color</span><span>Hold <kbd>C</kbd></span></li>
-          <li><span>Background color</span><span>Hold <kbd>B</kbd></span></li>
-        </ul>
         <p class="note">
-          While holding, move the mouse left to right to set hue and top to bottom to set saturation.
+          Hold <kbd>C</kbd> for the shapes or <kbd>B</kbd> for the background, then move the mouse:
+          left to right (&harr;) sets hue, top to bottom (&varr;) sets saturation.
         </p>
+        <div class="state-sliders" data-sliders="color"></div>
+      </section>
+
+      <section>
+        <h2>Grid</h2>
+        <div data-sliders="grid"></div>
       </section>
 
       <section>
@@ -392,11 +467,9 @@
         <ul class="keys">
           <li><span>Show or hide controls</span><span><kbd>H</kbd></span></li>
           <li><span>Cycle shape</span><span><kbd>S</kbd></span></li>
-          <li><span>Columns</span><span><kbd>&larr;</kbd><kbd>&rarr;</kbd></span></li>
-          <li><span>Rows</span><span><kbd>&darr;</kbd><kbd>&uarr;</kbd></span></li>
-          <li><span>Shape size</span><span><kbd>K</kbd><kbd>L</kbd></span></li>
           <li><span>Rotation</span><span><kbd>R</kbd></span></li>
           <li><span>Wiggle</span><span><kbd>W</kbd></span></li>
+          <li><span>Full screen</span><span><kbd>F</kbd></span></li>
           <li><span>Save frame as PNG</span><span><kbd>P</kbd></span></li>
         </ul>
       </section>

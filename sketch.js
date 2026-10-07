@@ -11,6 +11,8 @@ const FOV = Math.PI / 3;
 
 let currentShape = SHAPE_CUBE;
 let shapeSize = 28;
+const MIN_SHAPE_SIZE = 4;
+const MAX_SHAPE_SIZE = 120;
 let pyramidGeom = null; // unit-size pyramid, built once in setup()
 
 let objectHue = 130;
@@ -77,18 +79,27 @@ function setup() {
   const cnv = createCanvas(windowWidth, windowHeight, WEBGL);
   // Pointer listeners on the canvas itself (p5's hooks fire on window), so the
   // help panel blocks the push and clicks on it don't make ripples. Leaving
-  // fades the displacement out instead of freezing it.
+  // fades the displacement out instead of freezing it. Near the corner buttons
+  // also counts as off-canvas: the system cursor shows and the push fades out,
+  // so aiming at a button (or crossing the gaps between them) doesn't flicker
+  // the cursor or the effect.
+  const setNearUI = (near) => {
+    mouseInside = !near;
+    cnv.elt.style.cursor = near ? "default" : "none";
+  };
   cnv.elt.addEventListener("pointermove", (e) => {
-    mouseInside = true;
+    setNearUI(helpPanel.nearCorner(e.clientX, e.clientY));
     // Browsers can send zero-distance moves (e.g. after layout); those aren't activity.
     if (e.movementX !== 0 || e.movementY !== 0) lastMoveMs = millis();
   });
   cnv.elt.addEventListener("pointerleave", () => (mouseInside = false));
   cnv.elt.addEventListener("pointerdown", (e) => {
-    mouseInside = true;
-    lastMoveMs = millis();
     // Hand the keyboard back to the grid if a panel slider had focus.
     if (document.activeElement) document.activeElement.blur();
+    // A near miss on a corner button shouldn't send a ripple.
+    if (helpPanel.nearCorner(e.clientX, e.clientY)) return;
+    setNearUI(false);
+    lastMoveMs = millis();
     spawnRipple(e.offsetX - width * 0.5, e.offsetY - height * 0.5);
   });
   colorMode(HSB, 360, 100, 100);
@@ -354,6 +365,7 @@ function updateCamera() {
 function keyPressed() {
   if (controls) {
     controls.keyPressed();
+    helpPanel.syncState();
   }
 }
 
@@ -415,12 +427,14 @@ class Controls {
       rotating = !rotating;
     } else if (k === "w") {
       wiggle = !wiggle;
+    } else if (k === "f") {
+      toggleFullscreen();
     } else if (k === "p") {
       saveCanvas("matrix-" + nf(frameCount, 4), "png");
     } else if (k === "l") {
-      shapeSize += 2;
+      shapeSize = min(MAX_SHAPE_SIZE, shapeSize + 2);
     } else if (k === "k") {
-      shapeSize = max(4, shapeSize - 2);
+      shapeSize = max(MIN_SHAPE_SIZE, shapeSize - 2);
     } else if (k === "c") {
       cHeld = true;
       updateColorsFromMouse();
@@ -442,6 +456,7 @@ class Controls {
   mouseMoved() {
     if (cHeld || bHeld) {
       updateColorsFromMouse();
+      helpPanel.syncState();
     }
   }
 }

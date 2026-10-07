@@ -1,5 +1,24 @@
 // Help panel: a DOM overlay (markup and styles in index.html) listing the key
-// bindings, with a live slider for every value in `tune` (sketch.js).
+// bindings, with live sliders for the keyboard-driven state (stateSliders) and
+// for every value in `tune` (TUNE_SLIDERS), both in sketch.js.
+
+// Sliders for state the keys (and C/B + mouse) also change. Built on demand
+// because sketch.js, which declares these globals, loads after this file.
+function stateSliders() {
+  return {
+    color: [
+      { label: "Shape hue", keys: ["C"], axis: "↔", min: 0, max: 360, step: 1, unit: "°", get: () => objectHue, set: (v) => (objectHue = v) },
+      { label: "Shape saturation", keys: ["C"], axis: "↕", min: 0, max: 100, step: 1, unit: "%", get: () => objectSat, set: (v) => (objectSat = v) },
+      { label: "Background hue", keys: ["B"], axis: "↔", min: 0, max: 360, step: 1, unit: "°", get: () => bgHue, set: (v) => (bgHue = v) },
+      { label: "Background saturation", keys: ["B"], axis: "↕", min: 0, max: 100, step: 1, unit: "%", get: () => bgSat, set: (v) => (bgSat = v) },
+    ],
+    grid: [
+      { label: "Columns", keys: ["←", "→"], min: 1, max: MAX_COLS, step: 1, get: () => cols, set: (v) => (cols = v) },
+      { label: "Rows", keys: ["↓", "↑"], min: 1, max: MAX_ROWS, step: 1, get: () => rows, set: (v) => (rows = v) },
+      { label: "Shape size", keys: ["K", "L"], min: MIN_SHAPE_SIZE, max: MAX_SHAPE_SIZE, step: 2, unit: "px", get: () => shapeSize, set: (v) => (shapeSize = v) },
+    ],
+  };
+}
 
 const TUNE_SLIDERS = [
   {
@@ -46,6 +65,33 @@ function createEl(tag, className, text) {
   return el;
 }
 
+// Fullscreen covers the whole page (not just the canvas) so the panel and
+// buttons stay usable. The button is removed where the API is missing (e.g.
+// iPhone Safari); webkit-prefixed names cover older Safari.
+function fullscreenSupported() {
+  const el = document.documentElement;
+  return !!(el.requestFullscreen || el.webkitRequestFullscreen);
+}
+
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function toggleFullscreen() {
+  if (!fullscreenSupported()) return;
+  let result;
+  if (isFullscreen()) {
+    result = (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else {
+    const el = document.documentElement;
+    result = (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+  }
+  if (result && result.catch) result.catch(() => {}); // e.g. denied by the browser
+}
+
+// px around the corner buttons where the system cursor shows and the push is off.
+const CORNER_MARGIN = 40;
+
 // localStorage flag: once the nudge is dismissed or the panel opened, it never returns.
 const NUDGE_KEY = "3dviz-nudge-dismissed";
 const NUDGE_DELAY_MS = 1200;
@@ -69,12 +115,20 @@ function writeFlag(key) {
 class HelpPanel {
   constructor() {
     this.el = document.getElementById("help");
+    this.corner = document.getElementById("corner");
     this.button = document.getElementById("help-button");
     this.nudge = document.getElementById("nudge");
-    this.sliders = {}; // key -> { input, output, spec }
-    this.buildSliders(document.getElementById("tuning"));
+    this.tuneSliders = []; // { input, output, spec } per slider
+    this.stateSliders = [];
+    const state = stateSliders();
+    for (const name in state) {
+      const root = this.el.querySelector(`[data-sliders="${name}"]`);
+      for (const spec of state[name]) this.stateSliders.push(this.addSlider(root, spec));
+    }
+    this.buildTuneSliders(document.getElementById("tuning"));
 
     this.button.addEventListener("click", () => setHelp(true));
+    this.setupFullscreenButton(document.getElementById("fullscreen-button"));
     this.el.querySelector("[data-close]").addEventListener("click", () => setHelp(false));
     this.el.querySelector("[data-reset]").addEventListener("click", () => this.reset());
     const copy = this.el.querySelector("[data-copy]");
@@ -88,6 +142,40 @@ class HelpPanel {
     }
   }
 
+  // Is (x, y) within CORNER_MARGIN px of the visible corner items (buttons, plus
+  // the nudge while it shows)? Always false while the group is hidden.
+  nearCorner(x, y) {
+    if (this.corner.classList.contains("hidden")) return false;
+    for (const item of this.corner.children) {
+      if (item === this.nudge && !this.nudge.classList.contains("show")) continue;
+      const r = item.getBoundingClientRect();
+      if (
+        x > r.left - CORNER_MARGIN &&
+        x < r.right + CORNER_MARGIN &&
+        y > r.top - CORNER_MARGIN &&
+        y < r.bottom + CORNER_MARGIN
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  setupFullscreenButton(button) {
+    if (!fullscreenSupported()) {
+      button.remove();
+      return;
+    }
+    button.addEventListener("click", toggleFullscreen);
+    const update = () => {
+      const on = isFullscreen();
+      button.classList.toggle("active", on);
+      button.setAttribute("aria-label", on ? "Exit full screen (F)" : "Enter full screen (F)");
+    };
+    document.addEventListener("fullscreenchange", update);
+    document.addEventListener("webkitfullscreenchange", update);
+  }
+
   dismissNudge() {
     this.nudge.classList.remove("show");
     writeFlag(NUDGE_KEY);
@@ -96,53 +184,73 @@ class HelpPanel {
   setOpen(open) {
     if (open) this.dismissNudge();
     this.el.classList.toggle("open", open);
-    this.button.classList.toggle("hidden", open);
+    this.corner.classList.toggle("hidden", open);
     if (!open && this.el.contains(document.activeElement)) document.activeElement.blur();
   }
 
-  buildSliders(root) {
+  buildTuneSliders(root) {
     for (const group of TUNE_SLIDERS) {
       const section = createEl("section");
       section.append(createEl("h2", null, group.title));
-      for (const spec of group.items) {
-        const row = createEl("label", "slider");
-        const head = createEl("span", "slider-head");
-        const output = createEl("output");
-        head.append(createEl("span", null, spec.label), output);
-
-        const input = createEl("input");
-        input.type = "range";
-        input.min = spec.min;
-        input.max = spec.max;
-        input.step = spec.step;
-        input.addEventListener("input", () => {
-          tune[spec.key] = Number(input.value);
-          this.sync(spec.key);
-        });
-
-        row.append(head, input);
-        section.append(row);
-        this.sliders[spec.key] = { input, output, spec };
-        this.sync(spec.key);
+      for (const item of group.items) {
+        const spec = { ...item, get: () => tune[item.key], set: (v) => (tune[item.key] = v) };
+        this.tuneSliders.push(this.addSlider(section, spec));
       }
       root.append(section);
     }
   }
 
-  // Push tune[key] into its slider: thumb position, filled track, and readout.
-  sync(key) {
-    const { input, output, spec } = this.sliders[key];
-    const value = tune[key];
+  // spec: { label, min, max, step, unit?, keys?, axis?, get, set }. keys are the
+  // shortcut keycaps shown after the label; axis is the mouse direction while held.
+  addSlider(root, spec) {
+    const row = createEl("label", "slider");
+    const head = createEl("span", "slider-head");
+    const output = createEl("output");
+    const label = createEl("span", null, spec.label);
+    if (spec.keys) {
+      const keys = createEl("span", "slider-keys");
+      for (const k of spec.keys) keys.append(createEl("kbd", null, k));
+      if (spec.axis) keys.append(createEl("span", "axis", spec.axis));
+      label.append(keys);
+    }
+    head.append(label, output);
+
+    const input = createEl("input");
+    input.type = "range";
+    input.min = spec.min;
+    input.max = spec.max;
+    input.step = spec.step;
+
+    row.append(head, input);
+    root.append(row);
+    const slider = { input, output, spec };
+    input.addEventListener("input", () => {
+      spec.set(Number(input.value));
+      this.sync(slider);
+    });
+    this.sync(slider);
+    return slider;
+  }
+
+  // Push the slider's current value into it: thumb position, filled track, and readout.
+  sync({ input, output, spec }) {
+    const value = spec.get();
     input.value = value;
-    const pct = ((value - spec.min) / (spec.max - spec.min)) * 100;
+    const pct = Math.min(100, Math.max(0, ((value - spec.min) / (spec.max - spec.min)) * 100));
     input.style.setProperty("--p", pct + "%");
     const decimals = (String(spec.step).split(".")[1] || "").length;
-    output.textContent = value.toFixed(decimals) + (spec.unit ? " " + spec.unit : "");
+    const unit = !spec.unit ? "" : spec.unit === "°" || spec.unit === "%" ? spec.unit : " " + spec.unit;
+    output.textContent = value.toFixed(decimals) + unit;
+  }
+
+  // Call after keys or C/B color picking change state, so the sliders follow.
+  syncState() {
+    for (const slider of this.stateSliders) this.sync(slider);
   }
 
   reset() {
     Object.assign(tune, TUNE_DEFAULTS);
-    for (const key in this.sliders) this.sync(key);
+    for (const slider of this.tuneSliders) this.sync(slider);
   }
 
   // Copy the current values as a drop-in replacement for `tune` in sketch.js.
