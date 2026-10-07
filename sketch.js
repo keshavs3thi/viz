@@ -9,6 +9,18 @@ const MAX_COLS = 80;
 const MAX_ROWS = 45;
 const FOV = Math.PI / 3;
 
+// Responsive layout. The grid is sized from the window on load and on every
+// resize/rotation (manual changes from keys or sliders last until then): cells
+// sit about GRID_SPACING px apart and shapes fill SHAPE_FILL of that spacing.
+const GRID_SPACING = 46;
+const SHAPE_FILL = 0.6;
+// The px values in `tune` (push and ripple) are authored for a window whose
+// shorter side is REFERENCE_SIZE px, and scaled by viewScale on other screens.
+const REFERENCE_SIZE = 800;
+const MIN_VIEW_SCALE = 0.6;
+const MAX_VIEW_SCALE = 1.5;
+let viewScale = 1;
+
 let currentShape = SHAPE_CUBE;
 let shapeSize = 28;
 const MIN_SHAPE_SIZE = 4;
@@ -22,6 +34,7 @@ let bgSat = 80;
 let bgBri = 100;
 // Motion tuning, read live every frame. The help panel (H) has a slider for
 // each value, and its "Copy values" button copies a replacement for this object.
+// px values are at REFERENCE_SIZE; see viewScale.
 const tune = {
   pushRadius: 170,
   pushStrength: 7,
@@ -70,7 +83,7 @@ let wiggle = true;
 
 let controls;
 let helpPanel;
-let cols = 32;
+let cols = 32; // replaced by fitToWindow() in setup
 let rows = 18;
 
 function setup() {
@@ -93,6 +106,12 @@ function setup() {
     if (e.movementX !== 0 || e.movementY !== 0) lastMoveMs = millis();
   });
   cnv.elt.addEventListener("pointerleave", () => (mouseInside = false));
+  // Taps on the canvas are ours: cancel the browser's double-tap zoom and the
+  // synthetic click (pointer events above still fire). iOS also needs its pinch
+  // gesture events cancelled, since it ignores user-scalable=no.
+  cnv.elt.addEventListener("touchend", (e) => e.preventDefault(), { passive: false });
+  cnv.elt.addEventListener("dblclick", (e) => e.preventDefault());
+  document.addEventListener("gesturestart", (e) => e.preventDefault());
   cnv.elt.addEventListener("pointerdown", (e) => {
     // Hand the keyboard back to the grid if a panel slider had focus.
     if (document.activeElement) document.activeElement.blur();
@@ -106,6 +125,7 @@ function setup() {
   noStroke();
   noCursor();
   updateCamZ();
+  fitToWindow();
 
   // Build the pyramid once at unit size; drawShape3D() scales it per cell.
   pyramidGeom = buildGeometry(() => drawPyramid(1));
@@ -129,6 +149,18 @@ function updateCamZ() {
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   updateCamZ();
+  fitToWindow();
+  if (helpPanel) helpPanel.syncState();
+}
+
+// Size the grid and the motion scale to the current canvas.
+function fitToWindow() {
+  cols = constrain(Math.round(width / GRID_SPACING) + 1, 2, MAX_COLS);
+  rows = constrain(Math.round(height / GRID_SPACING) + 1, 2, MAX_ROWS);
+  const spacing = Math.min(width / (cols - 1), height / (rows - 1));
+  // Even sizes, matching the 2px step of K/L and the size slider.
+  shapeSize = constrain(Math.round((spacing * SHAPE_FILL) / 2) * 2, MIN_SHAPE_SIZE, MAX_SHAPE_SIZE);
+  viewScale = constrain(Math.min(width, height) / REFERENCE_SIZE, MIN_VIEW_SCALE, MAX_VIEW_SCALE);
 }
 
 function draw() {
@@ -241,8 +273,8 @@ function updateRipples(dt) {
   for (const rp of ripples) {
     rp.age += dt;
     const life = rp.age / tune.rippleLife;
-    rp.radius = rp.age * tune.rippleSpeed;
-    rp.amp = life < 1 ? tune.rippleStrength * (1 - life) * (1 - life) : 0;
+    rp.radius = rp.age * tune.rippleSpeed * viewScale;
+    rp.amp = life < 1 ? tune.rippleStrength * viewScale * (1 - life) * (1 - life) : 0;
   }
   ripples = ripples.filter((rp) => rp.amp > 0);
 }
@@ -269,25 +301,26 @@ function stepSpring(idx, x, y, dt) {
   let tz = 0;
   const dx = x - cursorX;
   const dy = y - cursorY;
-  const R = tune.pushRadius;
+  const R = tune.pushRadius * viewScale;
   const q = (dx * dx + dy * dy) / (R * R);
   if (q < 1 && cursorPresence > 0.001) {
     // (1 - q)^2 falls off smoothly and reaches exactly zero at pushRadius, so
     // there is no visible edge. Scaling the push by dx / R (rather than the unit
     // direction) zeroes it at the center and peaks in a ring around the cursor.
     const w = (1 - q) * (1 - q) * cursorPresence;
-    const radial = (tune.pushStrength / (RADIAL_PEAK * R)) * w;
+    const radial = ((tune.pushStrength * viewScale) / (RADIAL_PEAK * R)) * w;
     tx = dx * radial;
     ty = dy * radial;
-    tz = tune.pushLift * w;
+    tz = tune.pushLift * viewScale * w;
   }
 
+  const rippleWidth = tune.rippleWidth * viewScale;
   for (let n = 0; n < ripples.length; n++) {
     const rp = ripples[n];
     const rx = x - rp.x;
     const ry = y - rp.y;
     const d = Math.sqrt(rx * rx + ry * ry);
-    const u = (d - rp.radius) / tune.rippleWidth;
+    const u = (d - rp.radius) / rippleWidth;
     if (u <= -1 || u >= 1) continue;
     // A crest with shallow troughs on each side. The profile is zero at |u| = 1,
     // so the ring has no hard edge.
@@ -386,6 +419,10 @@ function mouseDragged() {
   mouseMoved();
 }
 
+function saveImage() {
+  saveCanvas("matrix-" + nf(frameCount, 4), "png");
+}
+
 function updateColorsFromMouse() {
   const h = map(mouseX, 0, width, 0, 360);
   const s = map(mouseY, 0, height, 0, 100);
@@ -430,7 +467,7 @@ class Controls {
     } else if (k === "f") {
       toggleFullscreen();
     } else if (k === "p") {
-      saveCanvas("matrix-" + nf(frameCount, 4), "png");
+      saveImage();
     } else if (k === "l") {
       shapeSize = min(MAX_SHAPE_SIZE, shapeSize + 2);
     } else if (k === "k") {

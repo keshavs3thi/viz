@@ -6,7 +6,7 @@
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/p5.js"></script>
     <!-- p5.sound not needed for this sketch; removed to avoid worklet errors and 404 sourcemaps -->
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <style>
       :root {
         --glass: rgba(246, 246, 248, 0.78);
@@ -16,6 +16,8 @@
         --fill: rgba(0, 0, 0, 0.05);
         --track: rgba(0, 0, 0, 0.1);
         --accent: #0071e3;
+        --switch-on: #34c759;
+        --segment-on: #fff;
         --shadow: 0 24px 60px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.06);
         font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
         -webkit-font-smoothing: antialiased;
@@ -29,6 +31,8 @@
           --fill: rgba(255, 255, 255, 0.08);
           --track: rgba(255, 255, 255, 0.16);
           --accent: #0a84ff;
+          --switch-on: #30d158;
+          --segment-on: #636366;
           --shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
         }
       }
@@ -39,10 +43,17 @@
         overflow: hidden;
         width: 100%;
         height: 100%;
+        /* App-like touch: no rubber-band or pull-to-refresh, no text selection
+           or grey tap flash. */
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
       }
       canvas {
         display: block;
         touch-action: none;
+        -webkit-touch-callout: none; /* no long-press "save image" menu */
       }
 
       .glass {
@@ -57,6 +68,7 @@
         font: inherit;
         color: inherit;
         cursor: pointer;
+        touch-action: manipulation; /* taps, no double-tap zoom */
       }
       button:focus-visible,
       input:focus-visible {
@@ -75,6 +87,7 @@
         max-height: calc(100dvh - 32px);
         overflow-y: auto;
         overscroll-behavior: contain;
+        touch-action: manipulation;
         scrollbar-width: thin;
         scrollbar-color: var(--track) transparent;
         padding: 20px 20px 18px;
@@ -121,12 +134,13 @@
         color: var(--secondary);
       }
       #help section + section,
-      #tuning {
+      #help .advanced {
         margin-top: 24px;
       }
       .close {
         display: grid;
         place-items: center;
+        flex-shrink: 0;
         width: 28px;
         height: 28px;
         padding: 0;
@@ -136,26 +150,6 @@
         color: var(--secondary);
       }
 
-      .keys {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-      }
-      .keys li {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 7px 0;
-        font-size: 14px;
-        border-top: 0.5px solid var(--hairline);
-      }
-      .keys li:first-child {
-        border-top: 0;
-      }
-      .keys li > span:last-child {
-        flex-shrink: 0;
-      }
       kbd {
         display: inline-flex;
         align-items: center;
@@ -287,6 +281,129 @@
         font-size: 12px;
         color: var(--secondary);
       }
+      #help h2 .slider-keys {
+        margin-left: 6px;
+        vertical-align: 0;
+      }
+      #help h2 kbd {
+        letter-spacing: 0;
+      }
+
+      /* Rows: label (+ keycaps) on the left, a control on the right. */
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 30px;
+        padding: 6px 0;
+        font-size: 14px;
+      }
+      .row + .row {
+        border-top: 0.5px solid var(--hairline);
+      }
+      .segmented {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2px;
+        margin: 4px 0 4px;
+        padding: 2px;
+        border-radius: 9px;
+        background: var(--fill);
+      }
+      .segmented button {
+        height: 28px;
+        border: 0;
+        border-radius: 7px;
+        font-size: 13px;
+        font-weight: 500;
+        background: transparent;
+        transition: background 0.15s ease;
+      }
+      .segmented button[aria-pressed="true"] {
+        background: var(--segment-on);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+      }
+      .switch {
+        position: relative;
+        flex-shrink: 0;
+        width: 44px;
+        height: 26px;
+        padding: 0;
+        border: 0;
+        border-radius: 13px;
+        background: var(--track);
+        transition: background 0.2s ease;
+      }
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.04), 0 2px 4px rgba(0, 0, 0, 0.2);
+        transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .switch[aria-checked="true"] {
+        background: var(--switch-on);
+      }
+      .switch[aria-checked="true"]::after {
+        transform: translateX(18px);
+      }
+      #help .switch:active {
+        transform: none;
+      }
+      .pill {
+        flex-shrink: 0;
+        height: 28px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 14px;
+        font-size: 13px;
+        font-weight: 500;
+        background: var(--fill);
+      }
+
+      /* Advanced motion tuning, collapsed by default. */
+      .advanced summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 0 4px;
+        border-top: 0.5px solid var(--hairline);
+        font-size: 14px;
+        font-weight: 600;
+        list-style: none;
+        cursor: pointer;
+      }
+      .advanced summary::-webkit-details-marker {
+        display: none;
+      }
+      .advanced summary::after {
+        content: "";
+        width: 7px;
+        height: 7px;
+        margin-right: 4px;
+        border-right: 1.6px solid var(--secondary);
+        border-bottom: 1.6px solid var(--secondary);
+        transform: rotate(45deg);
+        transition: transform 0.2s ease;
+      }
+      .advanced[open] summary::after {
+        transform: rotate(-135deg);
+      }
+      .advanced summary span {
+        display: block;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--secondary);
+      }
+      #tuning {
+        margin-top: 14px;
+      }
       #help footer {
         display: flex;
         gap: 8px;
@@ -313,13 +430,13 @@
          ignores the pointer so its empty space doesn't block the canvas. */
       #corner {
         position: fixed;
-        right: 16px;
-        bottom: 16px;
+        right: calc(16px + env(safe-area-inset-right));
+        bottom: calc(16px + env(safe-area-inset-bottom) + var(--banner-offset, 0px));
         display: flex;
         align-items: center;
         gap: 8px;
         pointer-events: none;
-        transition: opacity 0.2s ease, transform 0.2s ease;
+        transition: opacity 0.2s ease, transform 0.2s ease, bottom 0.3s ease;
       }
       #corner > * {
         pointer-events: auto;
@@ -402,8 +519,126 @@
         height: 12px;
       }
 
+      /* Phones: the panel becomes a bottom sheet over at most ~55% of the screen,
+         so the grid stays visible above it while you adjust things. */
+      .grabber {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        #help {
+          top: auto;
+          right: 0;
+          bottom: 0;
+          left: 0;
+          width: 100%;
+          max-height: 55vh;
+          max-height: 55dvh;
+          padding: 8px 20px calc(18px + env(safe-area-inset-bottom));
+          border-width: 0.5px 0 0;
+          border-radius: 22px 22px 0 0;
+          transform: translateY(24px);
+          transform-origin: bottom center;
+        }
+        .grabber {
+          display: block;
+          width: 36px;
+          height: 5px;
+          margin: 0 auto 10px;
+          border-radius: 3px;
+          background: var(--track);
+        }
+        #help header {
+          margin-bottom: 16px;
+        }
+      }
+
+      /* Touch screens only: suggests a computer. --banner-offset (set in panel.js)
+         lifts the corner buttons above it while it shows. */
+      #desktop-banner {
+        position: fixed;
+        left: calc(16px + env(safe-area-inset-left));
+        right: calc(16px + env(safe-area-inset-right));
+        bottom: calc(16px + env(safe-area-inset-bottom));
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 8px 10px 14px;
+        border-radius: 16px;
+        font-size: 13px;
+        line-height: 1.35;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(8px);
+        transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+          visibility 0s linear 0.3s;
+      }
+      #desktop-banner.show {
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+        transition-delay: 0s;
+      }
+      #desktop-banner span {
+        flex: 1;
+      }
+      #desktop-banner .close {
+        width: 32px;
+        height: 32px;
+      }
+
+      /* Touch screens (no hover, coarse pointer): swap mouse/keyboard wording for
+         touch wording, hide keycaps, and enlarge the controls for fingers. */
+      .for-touch {
+        display: none;
+      }
+      @media (hover: none) and (pointer: coarse) {
+        .for-mouse,
+        .slider-keys {
+          display: none;
+        }
+        .for-touch {
+          display: inline;
+        }
+        input[type="range"] {
+          height: 30px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+          width: 28px;
+          height: 28px;
+          margin-top: -12px;
+        }
+        input[type="range"]::-moz-range-thumb {
+          width: 28px;
+          height: 28px;
+        }
+        .segmented button {
+          height: 34px;
+        }
+        .switch {
+          width: 51px;
+          height: 31px;
+          border-radius: 16px;
+        }
+        .switch::after {
+          width: 27px;
+          height: 27px;
+        }
+        .switch[aria-checked="true"]::after {
+          transform: translateX(20px);
+        }
+        .pill {
+          height: 34px;
+          border-radius: 17px;
+        }
+        .corner-button {
+          width: 44px;
+          height: 44px;
+          opacity: 0.85;
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
-        #help, #corner, #nudge {
+        #help, #corner, #nudge, #desktop-banner {
           transition: none;
         }
       }
@@ -416,7 +651,8 @@
 
     <div id="corner">
       <div id="nudge" class="glass" role="status">
-        <span>Press <kbd>H</kbd> or click <strong>?</strong> for controls</span>
+        <span class="for-mouse">Press <kbd>H</kbd> or click <strong>?</strong> for controls</span>
+        <span class="for-touch">Tap <strong>?</strong> for controls</span>
         <button class="close" type="button" data-dismiss aria-label="Dismiss tip">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
             <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
@@ -434,12 +670,25 @@
       <button id="help-button" class="glass corner-button" type="button" aria-label="Show controls (H)" title="Controls (H)">?</button>
     </div>
 
+    <div id="desktop-banner" class="glass" role="note">
+      <span><strong>Best on a computer.</strong> It works here, but it's made for a mouse and keyboard.</span>
+      <button class="close" type="button" data-banner-dismiss aria-label="Dismiss">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
+
     <aside id="help" class="glass" aria-label="Controls">
+      <div class="grabber" aria-hidden="true"></div>
       <header>
         <div>
           <p class="eyebrow">3DVIZ</p>
           <h1>Controls</h1>
-          <p class="subtitle">Move the pointer to push the grid. Click to send a ripple.</p>
+          <p class="subtitle">
+            <span class="for-mouse">Move the pointer to push the grid. Click to send a ripple. <kbd>H</kbd> shows or hides this panel.</span>
+            <span class="for-touch">Drag across the grid to push it. Tap to send a ripple.</span>
+          </p>
         </div>
         <button class="close" type="button" data-close aria-label="Close controls (H)">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
@@ -450,11 +699,29 @@
 
       <section>
         <h2>Color</h2>
-        <p class="note">
+        <p class="note for-mouse">
           Hold <kbd>C</kbd> for the shapes or <kbd>B</kbd> for the background, then move the mouse:
           left to right (&harr;) sets hue, top to bottom (&varr;) sets saturation.
         </p>
         <div class="state-sliders" data-sliders="color"></div>
+      </section>
+
+      <section>
+        <h2>Shape<span class="slider-keys"><kbd>S</kbd></span></h2>
+        <div class="segmented" role="group" aria-label="Shape" data-shape>
+          <button type="button" data-value="0">Cube</button>
+          <button type="button" data-value="1">Sphere</button>
+          <button type="button" data-value="2">Pyramid</button>
+        </div>
+        <div data-sliders="shape"></div>
+        <div class="row">
+          <span>Rotation<span class="slider-keys"><kbd>R</kbd></span></span>
+          <button type="button" class="switch" role="switch" aria-label="Rotation" data-switch="rotating"></button>
+        </div>
+        <div class="row">
+          <span>Wiggle<span class="slider-keys"><kbd>W</kbd></span></span>
+          <button type="button" class="switch" role="switch" aria-label="Wiggle" data-switch="wiggle"></button>
+        </div>
       </section>
 
       <section>
@@ -463,24 +730,28 @@
       </section>
 
       <section>
-        <h2>Keyboard</h2>
-        <ul class="keys">
-          <li><span>Show or hide controls</span><span><kbd>H</kbd></span></li>
-          <li><span>Cycle shape</span><span><kbd>S</kbd></span></li>
-          <li><span>Rotation</span><span><kbd>R</kbd></span></li>
-          <li><span>Wiggle</span><span><kbd>W</kbd></span></li>
-          <li><span>Full screen</span><span><kbd>F</kbd></span></li>
-          <li><span>Save frame as PNG</span><span><kbd>P</kbd></span></li>
-        </ul>
+        <h2>Actions</h2>
+        <div class="row">
+          <span>Save image<span class="slider-keys"><kbd>P</kbd></span></span>
+          <button type="button" class="pill" data-save>Save PNG</button>
+        </div>
+        <div class="row" data-fullscreen-row>
+          <span>Full screen<span class="slider-keys"><kbd>F</kbd></span></span>
+          <button type="button" class="switch" role="switch" aria-label="Full screen" data-fullscreen-switch></button>
+        </div>
       </section>
 
-      <!-- Sliders are generated from TUNE_SLIDERS in panel.js. -->
-      <div id="tuning"></div>
-
-      <footer>
-        <button type="button" data-reset>Reset</button>
-        <button type="button" class="primary" data-copy>Copy values</button>
-      </footer>
+      <details class="advanced">
+        <summary>
+          <div>Advanced motion<span>Cursor, spring, ripple and idle tuning</span></div>
+        </summary>
+        <!-- Sliders are generated from TUNE_SLIDERS in panel.js. -->
+        <div id="tuning"></div>
+        <footer>
+          <button type="button" data-reset>Reset</button>
+          <button type="button" class="primary" data-copy>Copy values</button>
+        </footer>
+      </details>
     </aside>
 
     <script src="panel.js"></script>

@@ -12,10 +12,12 @@ function stateSliders() {
       { label: "Background hue", keys: ["B"], axis: "↔", min: 0, max: 360, step: 1, unit: "°", get: () => bgHue, set: (v) => (bgHue = v) },
       { label: "Background saturation", keys: ["B"], axis: "↕", min: 0, max: 100, step: 1, unit: "%", get: () => bgSat, set: (v) => (bgSat = v) },
     ],
+    shape: [
+      { label: "Size", keys: ["K", "L"], min: MIN_SHAPE_SIZE, max: MAX_SHAPE_SIZE, step: 2, unit: "px", get: () => shapeSize, set: (v) => (shapeSize = v) },
+    ],
     grid: [
       { label: "Columns", keys: ["←", "→"], min: 1, max: MAX_COLS, step: 1, get: () => cols, set: (v) => (cols = v) },
       { label: "Rows", keys: ["↓", "↑"], min: 1, max: MAX_ROWS, step: 1, get: () => rows, set: (v) => (rows = v) },
-      { label: "Shape size", keys: ["K", "L"], min: MIN_SHAPE_SIZE, max: MAX_SHAPE_SIZE, step: 2, unit: "px", get: () => shapeSize, set: (v) => (shapeSize = v) },
     ],
   };
 }
@@ -95,6 +97,17 @@ const CORNER_MARGIN = 40;
 // localStorage flag: once the nudge is dismissed or the panel opened, it never returns.
 const NUDGE_KEY = "3dviz-nudge-dismissed";
 const NUDGE_DELAY_MS = 1200;
+// localStorage flag: remembers whether "Advanced motion" was left open.
+const ADVANCED_KEY = "3dviz-advanced-open";
+// localStorage flag: the touch-only "best on a computer" banner was dismissed.
+const BANNER_KEY = "3dviz-desktop-banner-dismissed";
+const BANNER_DELAY_MS = 600;
+const IS_TOUCH = matchMedia("(hover: none) and (pointer: coarse)").matches;
+// Same breakpoint as the bottom-sheet CSS in index.html.
+const SHEET_QUERY = matchMedia("(max-width: 600px)");
+// Bottom sheet swipe: px dragged, or px/ms flick speed, that dismisses it.
+const SHEET_CLOSE_DISTANCE = 100;
+const SHEET_CLOSE_VELOCITY = 0.5;
 
 // Storage can be unavailable or throw (private windows, blocked site data);
 // then the nudge just behaves per page load.
@@ -106,9 +119,10 @@ function readFlag(key) {
   }
 }
 
-function writeFlag(key) {
+function writeFlag(key, on = true) {
   try {
-    localStorage.setItem(key, "1");
+    if (on) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
   } catch (e) {}
 }
 
@@ -120,12 +134,18 @@ class HelpPanel {
     this.nudge = document.getElementById("nudge");
     this.tuneSliders = []; // { input, output, spec } per slider
     this.stateSliders = [];
+    this.stateControls = []; // sync functions for the shape picker and switches
     const state = stateSliders();
     for (const name in state) {
       const root = this.el.querySelector(`[data-sliders="${name}"]`);
       for (const spec of state[name]) this.stateSliders.push(this.addSlider(root, spec));
     }
     this.buildTuneSliders(document.getElementById("tuning"));
+    this.setupStateControls();
+
+    const advanced = this.el.querySelector(".advanced");
+    advanced.open = readFlag(ADVANCED_KEY);
+    advanced.addEventListener("toggle", () => writeFlag(ADVANCED_KEY, advanced.open));
 
     this.button.addEventListener("click", () => setHelp(true));
     this.setupFullscreenButton(document.getElementById("fullscreen-button"));
@@ -133,6 +153,9 @@ class HelpPanel {
     this.el.querySelector("[data-reset]").addEventListener("click", () => this.reset());
     const copy = this.el.querySelector("[data-copy]");
     copy.addEventListener("click", () => this.copy(copy));
+
+    this.setupSheetSwipe();
+    this.setupBanner();
 
     this.nudge.querySelector("[data-dismiss]").addEventListener("click", () => this.dismissNudge());
     if (!readFlag(NUDGE_KEY)) {
@@ -161,19 +184,140 @@ class HelpPanel {
     return false;
   }
 
+  // Shape picker, Rotation/Wiggle switches, and Save, for the S/R/W/P keys.
+  setupStateControls() {
+    const shapeButtons = [...this.el.querySelectorAll("[data-shape] button")];
+    for (const b of shapeButtons) {
+      b.addEventListener("click", () => {
+        currentShape = Number(b.dataset.value);
+        this.syncState();
+      });
+    }
+    this.stateControls.push(() => {
+      for (const b of shapeButtons) b.setAttribute("aria-pressed", String(Number(b.dataset.value) === currentShape));
+    });
+
+    const toggles = {
+      rotating: [() => rotating, (v) => (rotating = v)],
+      wiggle: [() => wiggle, (v) => (wiggle = v)],
+    };
+    for (const el of this.el.querySelectorAll("[data-switch]")) {
+      const [get, set] = toggles[el.dataset.switch];
+      el.addEventListener("click", () => {
+        set(!get());
+        this.syncState();
+      });
+      this.stateControls.push(() => el.setAttribute("aria-checked", String(get())));
+    }
+
+    this.el.querySelector("[data-save]").addEventListener("click", saveImage);
+    this.syncState();
+  }
+
   setupFullscreenButton(button) {
+    const row = this.el.querySelector("[data-fullscreen-row]");
+    const toggle = row.querySelector("[data-fullscreen-switch]");
     if (!fullscreenSupported()) {
       button.remove();
+      row.remove();
       return;
     }
     button.addEventListener("click", toggleFullscreen);
+    toggle.addEventListener("click", toggleFullscreen);
     const update = () => {
       const on = isFullscreen();
       button.classList.toggle("active", on);
       button.setAttribute("aria-label", on ? "Exit full screen (F)" : "Enter full screen (F)");
+      toggle.setAttribute("aria-checked", String(on));
     };
+    update();
     document.addEventListener("fullscreenchange", update);
     document.addEventListener("webkitfullscreenchange", update);
+  }
+
+  // Phones: drag the bottom sheet down to dismiss it, from the grabber or header,
+  // or from anywhere once its content is scrolled to the top. Sliders are left
+  // alone so dragging them never moves the sheet.
+  setupSheetSwipe() {
+    const el = this.el;
+    let startY = 0;
+    let startT = 0;
+    let dy = 0;
+    let tracking = false;
+    let dragging = false;
+
+    el.addEventListener(
+      "touchstart",
+      (e) => {
+        tracking =
+          SHEET_QUERY.matches &&
+          e.touches.length === 1 &&
+          el.scrollTop <= 0 &&
+          !e.target.closest('input[type="range"]');
+        dragging = false;
+        dy = 0;
+        startY = e.touches[0].clientY;
+        startT = e.timeStamp;
+      },
+      { passive: true }
+    );
+
+    el.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!tracking) return;
+        dy = e.touches[0].clientY - startY;
+        if (!dragging) {
+          if (dy < -4) {
+            tracking = false; // scrolling the content up; let it scroll
+            return;
+          }
+          if (dy < 8) return;
+          dragging = true;
+          el.style.transition = "none";
+        }
+        e.preventDefault();
+        el.style.transform = `translateY(${Math.max(0, dy)}px)`;
+      },
+      { passive: false }
+    );
+
+    const end = (e) => {
+      tracking = false;
+      if (!dragging) return;
+      dragging = false;
+      const velocity = dy / Math.max(1, e.timeStamp - startT);
+      if (dy > SHEET_CLOSE_DISTANCE || (dy > 30 && velocity > SHEET_CLOSE_VELOCITY)) {
+        // Slide the rest of the way down, then hand back to the CSS closed state.
+        el.style.transition = "transform 0.25s ease, opacity 0.25s ease";
+        el.style.transform = "translateY(100%)";
+        setHelp(false);
+        setTimeout(() => {
+          el.style.transition = "";
+          el.style.transform = "";
+        }, 300);
+      } else {
+        el.style.transition = "";
+        el.style.transform = "";
+      }
+    };
+    el.addEventListener("touchend", end);
+    el.addEventListener("touchcancel", end);
+  }
+
+  setupBanner() {
+    const banner = document.getElementById("desktop-banner");
+    const setOffset = (px) => document.documentElement.style.setProperty("--banner-offset", px + "px");
+    banner.querySelector("[data-banner-dismiss]").addEventListener("click", () => {
+      banner.classList.remove("show");
+      setOffset(0);
+      writeFlag(BANNER_KEY);
+    });
+    if (!IS_TOUCH || readFlag(BANNER_KEY)) return;
+    setTimeout(() => {
+      banner.classList.add("show");
+      setOffset(banner.offsetHeight + 8);
+    }, BANNER_DELAY_MS);
   }
 
   dismissNudge() {
@@ -243,9 +387,10 @@ class HelpPanel {
     output.textContent = value.toFixed(decimals) + unit;
   }
 
-  // Call after keys or C/B color picking change state, so the sliders follow.
+  // Call after keys or C/B color picking change state, so the controls follow.
   syncState() {
     for (const slider of this.stateSliders) this.sync(slider);
+    for (const sync of this.stateControls) sync();
   }
 
   reset() {
